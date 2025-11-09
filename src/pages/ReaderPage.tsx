@@ -15,6 +15,9 @@ export default function ReaderPage() {
 
   const [isLoading, setIsLoading] = useState(true)
   
+  // 默认 scale 值
+  const scale = typeof window !== 'undefined' && window.innerWidth < 640 ? 1.0 : 1.5
+  
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
   const loadingRef = useRef(false)
@@ -84,8 +87,8 @@ export default function ReaderPage() {
         canvasContainerRef.current.innerHTML = ''
       }
       canvasRefs.current.clear()
-      setPdfDoc(pdf)
-      setTotalPages(pdf.numPages)
+      // setPdfDoc(pdf) // 未使用的状态
+      // setTotalPages(pdf.numPages) // 未使用的状态
       setIsLoading(false)
 
       if (targetPage) {
@@ -215,7 +218,7 @@ export default function ReaderPage() {
         behavior: smooth ? 'smooth' : 'auto'
       })
       
-      setCurrentPage(pageNum)
+      // setCurrentPage(pageNum) // 未使用的状态
       return true
     } else {
       console.error('❌ 未找到页面元素:', pageNum)
