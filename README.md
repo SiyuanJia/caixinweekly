@@ -39,8 +39,6 @@ npm install
 npm run dev
 ```
 
-访问 `http://localhost:5173`（浏览器会自动打开）
-
 ### 3️⃣ 构建生产版本
 
 ```bash
@@ -67,7 +65,7 @@ input/
 ```
 
 **文件格式说明：**
-- **Markdown 文件**：PaddleOCR 等工具导出的文本提取，包含完整文章内容
+- **Markdown 文件**：文本提取，包含完整文章内容
 - **outline.json**：PDF 目录结构，格式如下：
 
 ```json
@@ -81,29 +79,6 @@ input/
 ```
 
 #### 第2步：运行构建脚本
-
-```bash
-python3 tools/build_issue_from_md.py \
-  --issue-id 2025-41 \
-  --issue-title "财新周刊2025第41期" \
-  --pdf public/data/pdfs/2025-41.pdf \
-  --md-files input/2025-41-part1.md input/2025-41-part2.md input/2025-41-part3.md \
-  --outline input/2025-41-outline.json \
-  --output-dir public \
-  --oss-base-url / \
-  --gemini-endpoint "https://caixinweekly-pgfdddwbdi.cn-hongkong.fcapp.run" \
-  --prompt-file ./prompt.txt
-```
-
-**参数说明：**
-- `--issue-id`: 期刊编号（如 2025-41）
-- `--pdf`: PDF 文件路径（用于生成 URL，文件需要手动放入 `public/data/pdfs/`）
-- `--md-files`: Markdown 输入文件列表
-- `--outline`: Outline JSON 文件
-- `--output-dir`: 输出目录（通常为 `public`）
-- `--oss-base-url`: 资源基础 URL（本地测试用 `/`）
-- `--gemini-endpoint`: 云函数端点（可选）
-- `--prompt-file`: AI 提示词文件（可选）
 
 **输出文件：**
 ```
@@ -127,7 +102,6 @@ cp input/财新周刊.pdf public/data/pdfs/2025-41.pdf
 
 ```bash
 npm run dev
-# 访问 http://localhost:5173 查看新期次周刊
 ```
 
 #### 第5步：提交版本
@@ -406,61 +380,8 @@ ReaderPage
 | `--gemini-api-key` | ❌ | API Key | - |
 | `--prompt-file` | ❌ | 提示词文件 | `./prompt.txt` |
 
-**示例命令：**
-
-```bash
-# 基础用法（仅生成 JSON，不调用 AI）
-python3 tools/build_issue_from_md.py \
-  --issue-id 2025-41 \
-  --issue-title "财新周刊2025第41期" \
-  --pdf public/data/pdfs/2025-41.pdf \
-  --md-files input/2025-41-part1.md input/2025-41-part2.md \
-  --outline input/2025-41-outline.json \
-  --output-dir public \
-  --oss-base-url /
-
-# 完整用法（调用云函数生成 AI 摘要）
-python3 tools/build_issue_from_md.py \
-  --issue-id 2025-41 \
-  --issue-title "财新周刊2025第41期" \
-  --pdf public/data/pdfs/2025-41.pdf \
-  --md-files input/2025-41-part1.md input/2025-41-part2.md \
-  --outline input/2025-41-outline.json \
-  --output-dir public \
-  --oss-base-url / \
-  --gemini-endpoint "https://caixinweekly-pgfdddwbdi.cn-hongkong.fcapp.run" \
-  --prompt-file ./prompt.txt
-```
 
 ---
-
-## ☁️ 云函数部分（可选）
-
-### 概述
-
-项目支持通过自建云函数（阿里云 Function Compute）调用 Gemini API，为文章生成 AI 摘要和洞察。
-
-### 部署云函数
-
-1. **上传代码**：将 `caixin_index.py` 上传到阿里云 Function Compute
-2. **环境变量配置**：
-   ```
-   THIRTY_TWO_AI_API_KEY = <你的 302.ai API Key>
-   ALLOWED_ORIGINS = http://localhost:5173
-   ```
-3. **测试端点**（curl）：
-   ```bash
-   curl -X POST https://your-function-url \
-     -H "Content-Type: application/json" \
-     -H "Origin: http://localhost:5173" \
-     -d '{
-       "issueId": "2025-41",
-       "articles": [
-         {"id": "2025-41-0", "title": "文章标题", "content": "文章内容..."}
-       ],
-       "prompt": "..."
-     }'
-   ```
 
 ### Prompt 配置
 
