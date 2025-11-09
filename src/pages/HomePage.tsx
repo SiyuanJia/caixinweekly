@@ -39,8 +39,10 @@ export default function HomePage() {
 
   const handleViewFullText = () => {
     if (issueData) {
-      // 使用静态 PDF URL
-      window.open(issueData.pdfUrl, '_blank')
+      import('@/lib/oss-config').then(({ getOssUrl }) => {
+        const url = getOssUrl(issueData.pdfUrl)
+        window.open(url, '_blank')
+      })
     }
   }
 

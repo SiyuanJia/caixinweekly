@@ -60,10 +60,12 @@ export default function ReaderPage() {
         }
       }
 
-      // 最后尝试默认路径
+      // 最后尝试默认路径（带上 base 前缀）
       if (!pdfBlob && issueParam) {
         try {
-          const response = await fetch(`/data/pdfs/${issueParam}.pdf`)
+          const { getOssUrl, OSS_CONFIG } = await import('@/lib/oss-config')
+          const fallbackUrl = getOssUrl(OSS_CONFIG.paths.pdf(issueParam))
+          const response = await fetch(fallbackUrl)
           if (response.ok) {
             pdfBlob = await response.blob()
           }
