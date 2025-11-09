@@ -4,6 +4,9 @@ import path from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
+  // GitHub Pages 基础路径配置
+  base: '/caixinweekly/',
+  
   plugins: [react()],
   resolve: {
     alias: {

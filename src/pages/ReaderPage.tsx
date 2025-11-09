@@ -14,10 +14,6 @@ export default function ReaderPage() {
   const targetPage = Number(searchParams.get('page')) || 1
 
   const [isLoading, setIsLoading] = useState(true)
-  const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null)
-  const [currentPage, setCurrentPage] = useState(targetPage)
-  const [totalPages, setTotalPages] = useState(0)
-  const [scale, setScale] = useState(typeof window !== 'undefined' && window.innerWidth < 640 ? 1.0 : 1.5)
   
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())

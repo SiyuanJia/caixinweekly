@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ChevronDown, BookOpen } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { BookOpen } from 'lucide-react'
 import { useAppStore } from '@/lib/store'
 import ArticleCard from '@/components/ArticleCard'
 import ConfigModal from '@/components/ConfigModal'
@@ -9,7 +8,6 @@ import LoadingSpinner from '@/components/LoadingSpinner'
 import { loadIssueDetail, type StaticIssue, type StaticArticle } from '@/lib/static-data'
 
 export default function HomePage() {
-  const navigate = useNavigate()
   const { setIsConfigOpen } = useAppStore()
   const [isLoading, setIsLoading] = useState(true)
   const [issueData, setIssueData] = useState<StaticIssue | null>(null)
