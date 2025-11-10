@@ -30,6 +30,8 @@ export default function ReaderPage() {
   const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null)
   const cancelledRef = useRef(false)
   const anchorPageRef = useRef<number | null>(null)
+  const runIdRef = useRef(0)
+  const lastLoadKeyRef = useRef<string | null>(null)
 
   useEffect(() => {
     cancelledRef.current = false
@@ -41,6 +43,13 @@ export default function ReaderPage() {
 
   const loadPDF = async () => {
     try {
+      const currentKey = `${issueParam || ''}|${targetPage || 1}`
+      if (lastLoadKeyRef.current === currentKey && pdfRef.current) {
+        console.log('检测到重复加载请求，已忽略:', currentKey)
+        return
+      }
+      lastLoadKeyRef.current = currentKey
+      const myRunId = ++runIdRef.current
       if (loadingRef.current) {
         console.log('检测到并发加载，已跳过本次 loadPDF 调用')
         return
@@ -101,7 +110,7 @@ export default function ReaderPage() {
       console.log('开始加载PDF...')
       const shouldDisableWorker = detectDisableWorker()
       const loadingTask = pdfBlob
-        ? pdfjsLib.getDocument({ data: await pdfBlob.arrayBuffer(), ...(shouldDisableWorker ? { worker: null } : {}) } as any)
+        ? pdfjsLib.getDocument({ data: await pdfBlob.arrayBuffer(), disableWorker: shouldDisableWorker } as any)
         : pdfjsLib.getDocument({
             url: pdfUrlForStreaming as string,
             // 让 pdf.js 使用流式和 Range 分块请求（GitHub Pages 支持）
@@ -109,7 +118,7 @@ export default function ReaderPage() {
             disableAutoFetch: false,
             rangeChunkSize: 65536,
             withCredentials: false,
-            ...(shouldDisableWorker ? { worker: null } : {}),
+            disableWorker: shouldDisableWorker,
           } as any)
       const pdf = await loadingTask.promise
 
@@ -131,11 +140,11 @@ export default function ReaderPage() {
         console.log('按需渲染模式：目标页面', targetPage)
         const { endPage } = await renderPagesAround(pdf, targetPage, PRELOAD_RANGE)
         // 在后台逐步渲染剩余页面（小批次，避免阻塞）
-        startBackgroundRendering(pdf, endPage)
+        startBackgroundRendering(pdf, endPage, myRunId)
       } else {
         console.log('渲染前5页')
         const { endPage } = await renderPagesAround(pdf, 1, 5)
-        startBackgroundRendering(pdf, endPage)
+        startBackgroundRendering(pdf, endPage, myRunId)
       }
     } catch (error) {
       console.error('加载PDF失败:', error)
@@ -164,13 +173,11 @@ export default function ReaderPage() {
     await renderPage(pdf, centerPage)
     console.log(`✅ 目标页 ${centerPage} 渲染完成`)
     
-    setTimeout(() => {
-      console.log('立即跳转到目标页:', centerPage)
-      const success = scrollToPage(centerPage, false)
-      if (success) {
-        console.log('✅ 跳转成功')
-      }
-    }, 100)
+    console.log('立即跳转到目标页:', centerPage)
+    const success = scrollToPage(centerPage, false)
+    if (success) {
+      console.log('✅ 跳转成功')
+    }
     
     // 仅渲染目标页附近的小范围页面，避免一次性渲染整本 PDF 阻塞
     setTimeout(async () => {
@@ -259,12 +266,12 @@ export default function ReaderPage() {
 
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-  const startBackgroundRendering = (pdf: pdfjsLib.PDFDocumentProxy, endPageRendered: number) => {
+  const startBackgroundRendering = (pdf: pdfjsLib.PDFDocumentProxy, endPageRendered: number, runId: number) => {
     // 仅前向（endPageRendered+1 → numPages）。渲染历史页会导致视口补偿频繁，体验较差，暂不在后台渲染。
     setTimeout(async () => {
       let countInBatch = 0
       for (let pageNum = endPageRendered + 1; pageNum <= pdf.numPages; pageNum++) {
-        if (cancelledRef.current) return
+        if (cancelledRef.current || runIdRef.current !== runId) return
         await renderPage(pdf, pageNum)
         countInBatch++
         if (countInBatch >= BACKGROUND_BATCH_SIZE) {
