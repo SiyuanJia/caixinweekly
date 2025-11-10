@@ -29,6 +29,7 @@ export default function ReaderPage() {
   const loadingRef = useRef(false)
   const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null)
   const cancelledRef = useRef(false)
+  const anchorPageRef = useRef<number | null>(null)
 
   useEffect(() => {
     cancelledRef.current = false
@@ -46,7 +47,7 @@ export default function ReaderPage() {
       }
       loadingRef.current = true
 
-      // 配置 PDF.js worker，适配 GitHub Pages 子路径
+      // 配置 PDF.js worker（若不支持 module worker 将在下方回退）
       try {
         const workerUrl = getOssUrl('/pdf.worker.min.mjs')
         ;(pdfjsLib as any).GlobalWorkerOptions = (pdfjsLib as any).GlobalWorkerOptions || {}
@@ -98,8 +99,9 @@ export default function ReaderPage() {
       }
 
       console.log('开始加载PDF...')
+      const shouldDisableWorker = detectDisableWorker()
       const loadingTask = pdfBlob
-        ? pdfjsLib.getDocument({ data: await pdfBlob.arrayBuffer() })
+        ? pdfjsLib.getDocument({ data: await pdfBlob.arrayBuffer(), ...(shouldDisableWorker ? { worker: null } : {}) } as any)
         : pdfjsLib.getDocument({
             url: pdfUrlForStreaming as string,
             // 让 pdf.js 使用流式和 Range 分块请求（GitHub Pages 支持）
@@ -107,6 +109,7 @@ export default function ReaderPage() {
             disableAutoFetch: false,
             rangeChunkSize: 65536,
             withCredentials: false,
+            ...(shouldDisableWorker ? { worker: null } : {}),
           } as any)
       const pdf = await loadingTask.promise
 
@@ -126,13 +129,13 @@ export default function ReaderPage() {
 
       if (targetPage) {
         console.log('按需渲染模式：目标页面', targetPage)
-        const { startPage, endPage } = await renderPagesAround(pdf, targetPage, PRELOAD_RANGE)
+        const { endPage } = await renderPagesAround(pdf, targetPage, PRELOAD_RANGE)
         // 在后台逐步渲染剩余页面（小批次，避免阻塞）
-        startBackgroundRendering(pdf, startPage, endPage)
+        startBackgroundRendering(pdf, endPage)
       } else {
         console.log('渲染前5页')
-        const { startPage, endPage } = await renderPagesAround(pdf, 1, 5)
-        startBackgroundRendering(pdf, startPage, endPage)
+        const { endPage } = await renderPagesAround(pdf, 1, 5)
+        startBackgroundRendering(pdf, endPage)
       }
     } catch (error) {
       console.error('加载PDF失败:', error)
@@ -156,6 +159,7 @@ export default function ReaderPage() {
     const endPage = Math.min(pdf.numPages, centerPage + range)
     
     console.log(`渲染页面范围: ${startPage} - ${endPage}，目标页: ${centerPage}`)
+    anchorPageRef.current = centerPage
     
     await renderPage(pdf, centerPage)
     console.log(`✅ 目标页 ${centerPage} 渲染完成`)
@@ -181,6 +185,8 @@ export default function ReaderPage() {
         await renderPage(pdf, pageNum)
       }
       console.log(`✅ 周围页面渲染完成 (${startPage}-${endPage})`)
+      // 仅在近邻渲染阶段启用锚点补偿，后续后台渲染不再补偿，避免累积滚动
+      anchorPageRef.current = null
     }, 200)
     
     return { startPage, endPage }
@@ -238,6 +244,11 @@ export default function ReaderPage() {
 
         const rect = pageContainer.getBoundingClientRect()
         const height = rect.height
+        // 如果在锚点页之上插入新页面，补偿滚动使视口不被向上顶
+        const anchor = anchorPageRef.current
+        if (typeof anchor === 'number' && pageNum < anchor) {
+          window.scrollBy({ top: height, left: 0, behavior: 'auto' })
+        }
         return height
       }
     } catch (error) {
@@ -248,8 +259,8 @@ export default function ReaderPage() {
 
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-  const startBackgroundRendering = (pdf: pdfjsLib.PDFDocumentProxy, startPageRendered: number, endPageRendered: number) => {
-    // 前向（endPageRendered+1 → numPages）
+  const startBackgroundRendering = (pdf: pdfjsLib.PDFDocumentProxy, endPageRendered: number) => {
+    // 仅前向（endPageRendered+1 → numPages）。渲染历史页会导致视口补偿频繁，体验较差，暂不在后台渲染。
     setTimeout(async () => {
       let countInBatch = 0
       for (let pageNum = endPageRendered + 1; pageNum <= pdf.numPages; pageNum++) {
@@ -262,20 +273,6 @@ export default function ReaderPage() {
         }
       }
     }, 400)
-
-    // 后向（startPageRendered-1 → 1）
-    setTimeout(async () => {
-      let countInBatch = 0
-      for (let pageNum = startPageRendered - 1; pageNum >= 1; pageNum--) {
-        if (cancelledRef.current) return
-        await renderPage(pdf, pageNum)
-        countInBatch++
-        if (countInBatch >= BACKGROUND_BATCH_SIZE) {
-          countInBatch = 0
-          await delay(BACKGROUND_IDLE_MS)
-        }
-      }
-    }, 600)
   }
 
   const scrollToPage = (pageNum: number, smooth: boolean = true): boolean => {
@@ -301,6 +298,32 @@ export default function ReaderPage() {
       )
       return false
     }
+  }
+
+  function detectDisableWorker(): boolean {
+    // 某些移动端（如微信/QQ/UC内核）不支持 module worker，回退到主线程渲染更稳
+    const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+    const isProblematicUA =
+      /MicroMessenger|MQQBrowser|QQBrowser|UCBrowser|baiduboxapp|HeyTapBrowser/i.test(ua)
+    // 粗略能力检测：是否支持 module worker
+    let supportsModuleWorker = false
+    try {
+      // @ts-ignore
+      const test = new Worker(
+        URL.createObjectURL(new Blob(['export default {};'], { type: 'application/javascript' })),
+        // @ts-ignore
+        { type: 'module' }
+      )
+      test.terminate()
+      supportsModuleWorker = true
+    } catch {
+      supportsModuleWorker = false
+    }
+    const disable = isProblematicUA || !supportsModuleWorker
+    if (disable) {
+      console.log('已禁用 PDF.js worker（移动端兼容回退）')
+    }
+    return disable
   }
 
   if (isLoading) {
