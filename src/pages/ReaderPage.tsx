@@ -59,6 +59,7 @@ export default function ReaderPage() {
       // 尝试从IndexedDB加载
       const issueId = Number(issueParam)
       let pdfBlob: Blob | null = null
+      let pdfUrlForStreaming: string | null = null
       
       if (!isNaN(issueId)) {
         const issue = await db.issues.get(issueId)
@@ -67,46 +68,46 @@ export default function ReaderPage() {
         }
       }
 
-      // 如果IndexedDB没有，尝试加载静态文件
+      // 如果IndexedDB没有，使用静态文件 URL（交给 pdf.js 以流式/按需加载）
       if (!pdfBlob && issueParam) {
         try {
           const staticIssue = await loadIssueDetail(issueParam)
           if (staticIssue?.pdfUrl) {
-            // 兼容 GitHub Pages 子路径：相对路径通过 getOssUrl 补齐 base
             const pdfUrl = /^https?:\/\//i.test(staticIssue.pdfUrl)
               ? staticIssue.pdfUrl
               : getOssUrl(staticIssue.pdfUrl)
-            const response = await fetch(pdfUrl)
-            if (response.ok) {
-              pdfBlob = await response.blob()
-            }
+            pdfUrlForStreaming = pdfUrl
           }
         } catch (e) {
-          console.warn('加载静态PDF失败，尝试默认路径')
+          console.warn('解析期次 JSON 失败，尝试默认 PDF 路径')
         }
       }
 
-      // 最后尝试默认路径（带上 base 前缀）
-      if (!pdfBlob && issueParam) {
+      // 最后尝试默认路径（带上 base 前缀）用于流式
+      if (!pdfBlob && !pdfUrlForStreaming && issueParam) {
         try {
           const { getOssUrl, OSS_CONFIG } = await import('@/lib/oss-config')
-          const fallbackUrl = getOssUrl(OSS_CONFIG.paths.pdf(issueParam))
-          const response = await fetch(fallbackUrl)
-          if (response.ok) {
-            pdfBlob = await response.blob()
-          }
+          pdfUrlForStreaming = getOssUrl(OSS_CONFIG.paths.pdf(issueParam))
         } catch (e) {
-          console.error('加载默认PDF路径失败')
+          console.error('计算默认 PDF 路径失败')
         }
       }
 
-      if (!pdfBlob) {
-        throw new Error('未找到PDF文件')
+      if (!pdfBlob && !pdfUrlForStreaming) {
+        throw new Error('未找到PDF文件（既无本地 Blob，也无法解析 URL）')
       }
 
       console.log('开始加载PDF...')
-      const arrayBuffer = await pdfBlob.arrayBuffer()
-      const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer })
+      const loadingTask = pdfBlob
+        ? pdfjsLib.getDocument({ data: await pdfBlob.arrayBuffer() })
+        : pdfjsLib.getDocument({
+            url: pdfUrlForStreaming as string,
+            // 让 pdf.js 使用流式和 Range 分块请求（GitHub Pages 支持）
+            disableStream: false,
+            disableAutoFetch: false,
+            rangeChunkSize: 65536,
+            withCredentials: false,
+          } as any)
       const pdf = await loadingTask.promise
 
       console.log('PDF加载完成，总页数:', pdf.numPages)
