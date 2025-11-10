@@ -6,6 +6,7 @@ import * as pdfjsLib from 'pdfjs-dist'
 import { db } from '@/lib/db'
 import { loadIssueDetail } from '@/lib/static-data'
 import LoadingSpinner from '@/components/LoadingSpinner'
+import { getOssUrl } from '@/lib/oss-config'
 
 export default function ReaderPage() {
   const [searchParams] = useSearchParams()
@@ -50,7 +51,11 @@ export default function ReaderPage() {
         try {
           const staticIssue = await loadIssueDetail(issueParam)
           if (staticIssue?.pdfUrl) {
-            const response = await fetch(staticIssue.pdfUrl)
+            // 兼容 GitHub Pages 子路径：相对路径通过 getOssUrl 补齐 base
+            const pdfUrl = /^https?:\/\//i.test(staticIssue.pdfUrl)
+              ? staticIssue.pdfUrl
+              : getOssUrl(staticIssue.pdfUrl)
+            const response = await fetch(pdfUrl)
             if (response.ok) {
               pdfBlob = await response.blob()
             }
