@@ -9,6 +9,11 @@ import LoadingSpinner from '@/components/LoadingSpinner'
 import { getOssUrl } from '@/lib/oss-config'
 
 export default function ReaderPage() {
+  // 预渲染范围（目标页两侧各 N 页）
+  const PRELOAD_RANGE = 2
+  // 背景渲染：每批次页面数与批次间歇
+  const BACKGROUND_BATCH_SIZE = 4
+  const BACKGROUND_IDLE_MS = 60
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const issueParam = searchParams.get('issue')
@@ -22,9 +27,15 @@ export default function ReaderPage() {
   const canvasContainerRef = useRef<HTMLDivElement>(null)
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
   const loadingRef = useRef(false)
+  const pdfRef = useRef<pdfjsLib.PDFDocumentProxy | null>(null)
+  const cancelledRef = useRef(false)
 
   useEffect(() => {
+    cancelledRef.current = false
     loadPDF()
+    return () => {
+      cancelledRef.current = true
+    }
   }, [issueParam])
 
   const loadPDF = async () => {
@@ -34,6 +45,16 @@ export default function ReaderPage() {
         return
       }
       loadingRef.current = true
+
+      // 配置 PDF.js worker，适配 GitHub Pages 子路径
+      try {
+        const workerUrl = getOssUrl('/pdf.worker.min.mjs')
+        ;(pdfjsLib as any).GlobalWorkerOptions = (pdfjsLib as any).GlobalWorkerOptions || {}
+        ;((pdfjsLib as any).GlobalWorkerOptions as any).workerSrc = workerUrl
+        console.log('PDF.js worker 已设置：', workerUrl)
+      } catch (_e) {
+        // 忽略 worker 配置失败，PDF.js 会退回主线程渲染（较慢）
+      }
 
       // 尝试从IndexedDB加载
       const issueId = Number(issueParam)
@@ -89,6 +110,7 @@ export default function ReaderPage() {
       const pdf = await loadingTask.promise
 
       console.log('PDF加载完成，总页数:', pdf.numPages)
+      pdfRef.current = pdf
 
       if (canvasContainerRef.current) {
         canvasContainerRef.current.innerHTML = ''
@@ -98,12 +120,18 @@ export default function ReaderPage() {
       // setTotalPages(pdf.numPages) // 未使用的状态
       setIsLoading(false)
 
+      // 等待容器挂载完成（确保 ref 可用）
+      await waitForContainerMounted()
+
       if (targetPage) {
         console.log('按需渲染模式：目标页面', targetPage)
-        await renderPagesAround(pdf, targetPage)
+        const { startPage, endPage } = await renderPagesAround(pdf, targetPage, PRELOAD_RANGE)
+        // 在后台逐步渲染剩余页面（小批次，避免阻塞）
+        startBackgroundRendering(pdf, startPage, endPage)
       } else {
         console.log('渲染前5页')
-        await renderPagesAround(pdf, 1, 5)
+        const { startPage, endPage } = await renderPagesAround(pdf, 1, 5)
+        startBackgroundRendering(pdf, startPage, endPage)
       }
     } catch (error) {
       console.error('加载PDF失败:', error)
@@ -113,7 +141,16 @@ export default function ReaderPage() {
     }
   }
 
-  const renderPagesAround = async (pdf: pdfjsLib.PDFDocumentProxy, centerPage: number, range: number = 10) => {
+  const waitForContainerMounted = async (): Promise<void> => {
+    const MAX_RETRY = 20
+    let tries = 0
+    while (!canvasContainerRef.current && tries < MAX_RETRY) {
+      await new Promise(r => setTimeout(r, 50))
+      tries++
+    }
+  }
+
+  const renderPagesAround = async (pdf: pdfjsLib.PDFDocumentProxy, centerPage: number, range: number = 2) => {
     const startPage = Math.max(1, centerPage - range)
     const endPage = Math.min(pdf.numPages, centerPage + range)
     
@@ -130,25 +167,22 @@ export default function ReaderPage() {
       }
     }, 100)
     
+    // 仅渲染目标页附近的小范围页面，避免一次性渲染整本 PDF 阻塞
     setTimeout(async () => {
       console.log('开始渲染周围页面...')
+      // 先向上，再向下，保证目标页尽快可见
+      for (let pageNum = centerPage - 1; pageNum >= startPage; pageNum--) {
+        if (cancelledRef.current) return
+        await renderPage(pdf, pageNum)
+      }
       for (let pageNum = centerPage + 1; pageNum <= endPage; pageNum++) {
+        if (cancelledRef.current) return
         await renderPage(pdf, pageNum)
       }
       console.log(`✅ 周围页面渲染完成 (${startPage}-${endPage})`)
-      
-      // 继续渲染剩余页面（懒加载）
-      if (endPage < pdf.numPages) {
-        console.log('开始懒加载剩余页面...')
-        for (let pageNum = endPage + 1; pageNum <= pdf.numPages; pageNum++) {
-          await renderPage(pdf, pageNum)
-          if (pageNum % 10 === 0) {
-            console.log(`懒加载进度: ${pageNum}/${pdf.numPages}`)
-          }
-        }
-        console.log('✅ 全部页面加载完成')
-      }
     }, 200)
+    
+    return { startPage, endPage }
   }
 
   const renderPage = async (pdf: pdfjsLib.PDFDocumentProxy, pageNum: number): Promise<number | null> => {
@@ -209,6 +243,38 @@ export default function ReaderPage() {
       console.error(`渲染第${pageNum}页失败:`, error)
     }
     return null
+  }
+
+  const delay = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+  const startBackgroundRendering = (pdf: pdfjsLib.PDFDocumentProxy, startPageRendered: number, endPageRendered: number) => {
+    // 前向（endPageRendered+1 → numPages）
+    setTimeout(async () => {
+      let countInBatch = 0
+      for (let pageNum = endPageRendered + 1; pageNum <= pdf.numPages; pageNum++) {
+        if (cancelledRef.current) return
+        await renderPage(pdf, pageNum)
+        countInBatch++
+        if (countInBatch >= BACKGROUND_BATCH_SIZE) {
+          countInBatch = 0
+          await delay(BACKGROUND_IDLE_MS)
+        }
+      }
+    }, 400)
+
+    // 后向（startPageRendered-1 → 1）
+    setTimeout(async () => {
+      let countInBatch = 0
+      for (let pageNum = startPageRendered - 1; pageNum >= 1; pageNum--) {
+        if (cancelledRef.current) return
+        await renderPage(pdf, pageNum)
+        countInBatch++
+        if (countInBatch >= BACKGROUND_BATCH_SIZE) {
+          countInBatch = 0
+          await delay(BACKGROUND_IDLE_MS)
+        }
+      }
+    }, 600)
   }
 
   const scrollToPage = (pageNum: number, smooth: boolean = true): boolean => {
