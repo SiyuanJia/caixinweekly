@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
 import { motion } from 'framer-motion'
@@ -20,6 +20,11 @@ export default function ReaderPage() {
   const targetPage = Number(searchParams.get('page')) || 1
 
   const [isLoading, setIsLoading] = useState(true)
+  // 渲染模式：'pdf' | 'image'
+  const [mode, setMode] = useState<'pdf' | 'image'>(() => {
+    const saved = typeof window !== 'undefined' ? window.localStorage.getItem('readerMode') : null
+    return (saved === 'image' || saved === 'pdf') ? (saved as 'pdf' | 'image') : 'pdf'
+  })
   
   // 默认 scale 值
   const scale = typeof window !== 'undefined' && window.innerWidth < 640 ? 1.0 : 1.5
@@ -32,14 +37,34 @@ export default function ReaderPage() {
   const anchorPageRef = useRef<number | null>(null)
   const runIdRef = useRef(0)
   const lastLoadKeyRef = useRef<string | null>(null)
+  const imageManifestRef = useRef<any | null>(null)
 
   useEffect(() => {
     cancelledRef.current = false
-    loadPDF()
+    if (mode === 'pdf') {
+      loadPDF()
+    } else {
+      loadImages()
+    }
     return () => {
       cancelledRef.current = true
     }
-  }, [issueParam])
+  }, [issueParam, mode])
+
+  const handleSwitchMode = useCallback((next: 'pdf' | 'image') => {
+    if (next === mode) return
+    setIsLoading(true)
+    setMode(next)
+    try {
+      window.localStorage.setItem('readerMode', next)
+    } catch {}
+    // 清空容器
+    if (canvasContainerRef.current) {
+      canvasContainerRef.current.innerHTML = ''
+    }
+    // 取消 PDF 渲染后台任务
+    cancelledRef.current = true
+  }, [mode])
 
   const loadPDF = async () => {
     try {
@@ -151,6 +176,109 @@ export default function ReaderPage() {
       setIsLoading(false)
     } finally {
       loadingRef.current = false
+    }
+  }
+
+  // ============ 图片模式 ============
+  type Manifest = {
+    numPages: number
+    images: string[]
+    pageHeights?: number[]
+    width?: number
+    issueTitle?: string
+    outline?: Array<{ title: string; pageNumber: number; order?: number }>
+    base?: string
+  }
+
+  const fetchManifest = async (): Promise<Manifest | null> => {
+    if (!issueParam) return null
+    const url = getOssUrl(`/data/pages/${issueParam}/manifest.json`)
+    try {
+      const res = await fetch(url, { cache: 'no-store' })
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as Manifest
+      imageManifestRef.current = data
+      return data
+    } catch (e) {
+      console.warn('加载图片 manifest 失败，回退到 PDF 模式', e)
+      return null
+    }
+  }
+
+  const createImagePage = (idx: number, src: string, altSrc: string | null, ratioPct: number) => {
+    const wrap = document.createElement('div')
+    wrap.className = 'page-container mb-4 md:mb-6'
+    wrap.setAttribute('data-page', String(idx))
+    const label = document.createElement('div')
+    label.className = 'text-center text-xs text-gray-500 mb-1'
+    label.textContent = `第 ${idx} 页`
+    const shell = document.createElement('div')
+    shell.className = 'page bg-white rounded shadow-md overflow-hidden'
+    const sk = document.createElement('div')
+    sk.className = 'bg-gray-100'
+    sk.style.width = '100%'
+    sk.style.paddingTop = `${ratioPct}%`
+    const img = document.createElement('img')
+    img.loading = idx <= 3 ? ('eager' as any) : ('lazy' as any)
+    img.setAttribute('fetchpriority', idx <= 2 ? 'high' : 'auto')
+    img.decoding = 'async'
+    img.alt = `Page ${idx}`
+    img.style.opacity = '0.001'
+    img.addEventListener('load', () => {
+      sk.remove()
+      img.style.opacity = '1'
+    })
+    if (altSrc) {
+      img.addEventListener('error', () => {
+        if ((img as any).dataset.fallback !== '1') {
+          ;(img as any).dataset.fallback = '1'
+          img.src = altSrc
+        }
+      })
+    }
+    img.src = src
+    shell.appendChild(sk)
+    shell.appendChild(img)
+    wrap.appendChild(label)
+    wrap.appendChild(shell)
+    return wrap
+  }
+
+  const loadImages = async () => {
+    try {
+      setIsLoading(true)
+      const manifest = await fetchManifest()
+      if (!manifest) {
+        console.error('图片模式：未找到 manifest，保持图片模式不回退。')
+        setIsLoading(false)
+        return
+      }
+      // 展示容器，再进行插入，避免容器未挂载导致 appendChild 失败
+      setIsLoading(false)
+      await waitForContainerMounted()
+      if (canvasContainerRef.current) {
+        canvasContainerRef.current.innerHTML = ''
+      }
+      // 从 manifest 的路径中提取目录作为基路径；避免给 URL 构造器传无协议的相对路径
+      const manifestPath = getOssUrl(`/data/pages/${issueParam}/manifest.json`)
+      const usedBase = manifestPath.replace(/manifest\.json(?:\\?.*)?$/, '')
+      const fallbackBase = usedBase.replace('/caixinweekly/', '/')
+      const w = manifest.width || 0
+      for (let i = 0; i < manifest.images.length; i++) {
+        const idx = i + 1
+        const name = manifest.images[i]
+        const src = usedBase + name
+        const alt = fallbackBase ? fallbackBase + name : null
+        const h = (manifest.pageHeights && manifest.pageHeights[i]) ? manifest.pageHeights[i] : 0
+        const ratioPct = (h > 0 && w > 0) ? (h / w * 100) : 140
+        const node = createImagePage(idx, src, alt, ratioPct)
+        canvasContainerRef.current?.appendChild(node)
+      }
+      // 立即跳到目标页
+      scrollToPage(targetPage, false)
+    } catch (e) {
+      console.error('图片模式加载失败：', e)
+      setIsLoading(false)
     }
   }
 
@@ -336,7 +464,7 @@ export default function ReaderPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
-        <LoadingSpinner text="正在加载PDF..." size="lg" />
+        <LoadingSpinner text={mode === 'pdf' ? '正在加载PDF...' : '正在加载页面...'} size="lg" />
       </div>
     )
   }
@@ -357,8 +485,29 @@ export default function ReaderPage() {
           <span className="hidden sm:inline">返回目录</span>
         </button>
       </motion.div>
+      {/* 渲染模式切换 */}
+      <motion.div
+        initial={{ opacity: 0, y: -20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="fixed top-20 right-4 z-40"
+      >
+        <div className="flex bg-white rounded-lg shadow-lg overflow-hidden">
+          <button
+            onClick={() => handleSwitchMode('image')}
+            className={`px-3 py-2 text-sm ${mode === 'image' ? 'bg-caixin-gold text-caixin-navy' : 'hover:bg-gray-50'}`}
+          >
+            图片模式
+          </button>
+          <button
+            onClick={() => handleSwitchMode('pdf')}
+            className={`px-3 py-2 text-sm border-l ${mode === 'pdf' ? 'bg-caixin-gold text-caixin-navy' : 'hover:bg-gray-50'}`}
+          >
+            PDF模式
+          </button>
+        </div>
+      </motion.div>
 
-      {/* PDF内容 - 移动端优化布局 */}
+      {/* 内容容器：PDF或图片都会插入到这里 */}
       <div
         ref={canvasContainerRef}
         className="bg-gray-100 rounded-xl p-2 md:p-8 overflow-x-auto"

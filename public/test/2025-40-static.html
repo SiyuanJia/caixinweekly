@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>财新周刊 2025-40 静态图片测试</title>
+    <style>
+      body { margin: 0; font-family: -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif; background: #f7f7fb; color: #111827; }
+      header { position: sticky; top: 0; z-index: 10; background: #0b1a33; color: #ffcc66; padding: 12px 16px; display: flex; align-items: center; gap: 12px; }
+      header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+      .container { max-width: 900px; margin: 16px auto; padding: 0 12px; }
+      .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+      select, input { padding: 6px 8px; }
+      .page { background: white; border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin: 12px 0; overflow: hidden; }
+      .page img { display: block; width: 100%; height: auto; }
+      .skeleton { width: 100%; padding-top: 140%; background: linear-gradient(90deg,#f0f3f7, #e5e9f0, #f0f3f7); background-size: 200% 100%; animation: pulse 1.4s ease-in-out infinite; }
+      @keyframes pulse { 0% {background-position: 200% 0;} 100% {background-position: -200% 0;} }
+      .hint { color: #6b7280; font-size: 12px; }
+      .jump { color: #ffcc66; background: transparent; border: 1px solid #ffcc66; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>财新周刊 2025-40 静态图片测试</h1>
+      <span class="hint">仅供性能与兼容性验证，不影响现有逻辑</span>
+    </header>
+    <div class="container">
+      <div class="toolbar">
+        <label>跳转到页码：</label>
+        <input id="pageInput" type="number" min="1" step="1" style="width:90px" />
+        <button class="jump" id="jumpBtn">跳转</button>
+        <label>按目录跳转：</label>
+        <select id="toc"></select>
+      </div>
+      <div id="pages"></div>
+    </div>
+    <script>
+      // 兼容 dev base=/caixinweekly/、静态服务器(/public/)、GitHub Pages(/caixinweekly/)
+      const basePath = (() => {
+        const p = location.pathname; // 如 /caixinweekly/test/2025-40-static.html 或 /public/test/2025-40-static.html
+        const idx = p.indexOf('/test/');
+        if (idx >= 0) return p.slice(0, idx);
+        return '';
+      })();
+      const manifestCandidates = [
+        basePath + '/data/pages/2025-40/manifest.json',
+        '/data/pages/2025-40/manifest.json', // dev 环境下 public 资源通常挂载在根
+      ];
+      const container = document.getElementById('pages');
+      const tocSelect = document.getElementById('toc');
+      const pageInput = document.getElementById('pageInput');
+      const jumpBtn = document.getElementById('jumpBtn');
+
+      function createPage(index, src, altSrc, ratioPct) {
+        const wrap = document.createElement('div');
+        wrap.className = 'page';
+        wrap.id = 'page-' + String(index).padStart(3,'0');
+        const sk = document.createElement('div');
+        sk.className = 'skeleton';
+        // 根据 manifest 的实际高宽比设置占位高度，避免图片加载后页面高度突变引起偏移
+        if (ratioPct && ratioPct > 0) {
+          sk.style.paddingTop = ratioPct + '%';
+        }
+        const img = document.createElement('img');
+        // 首屏前几张强制抢占网络，其他采用懒加载
+        img.loading = (index <= 3 ? 'eager' : 'lazy');
+        img.setAttribute('fetchpriority', index <= 2 ? 'high' : 'auto');
+        img.decoding = 'async';
+        img.alt = 'Page ' + index;
+        // 使用透明度而不是 display:none，避免浏览器因“不可见”而不触发懒加载
+        img.style.opacity = '0.001';
+        img.addEventListener('load', () => {
+          sk.remove();
+          img.style.opacity = '1';
+        });
+        if (altSrc) {
+          img.addEventListener('error', () => {
+            if (img.dataset.fallback !== '1') {
+              img.dataset.fallback = '1';
+              img.src = altSrc;
+            }
+          });
+        }
+        img.src = src;
+        wrap.appendChild(sk);
+        wrap.appendChild(img);
+        return wrap;
+      }
+
+      function scrollToPage(p) {
+        const el = document.getElementById('page-' + String(p).padStart(3,'0'));
+        if (!el) return;
+        const header = document.querySelector('header');
+        const headerH = header ? header.getBoundingClientRect().height : 0;
+        const top = window.scrollY + el.getBoundingClientRect().top - headerH - 8;
+        window.scrollTo({ top, left: 0, behavior: 'auto' }); // 立即跳转，无动画
+      }
+
+      function fetchFirstOk(urls) {
+        let lastErr = null;
+        return urls.reduce((p, url) => {
+          return p.catch(() => fetch(url).then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json().then(j => ({ url, json: j }));
+          }));
+        }, Promise.reject(lastErr));
+      }
+
+      fetchFirstOk(manifestCandidates).then(({ url: usedUrl, json: manifest }) => {
+        document.title = (manifest.issueTitle || '财新周刊') + ' 静态图片测试';
+        pageInput.min = 1;
+        pageInput.max = manifest.numPages;
+        pageInput.value = 1;
+        // 目录
+        tocSelect.innerHTML = '<option value="">选择目录</option>' + (manifest.outline||[]).map(it => {
+          return '<option value="'+ it.pageNumber +'">' + it.pageNumber + '｜' + it.title + '</option>';
+        }).join('');
+        tocSelect.addEventListener('change', (e) => {
+          const v = parseInt(e.target.value || '0', 10);
+          if (v) scrollToPage(v);
+        });
+        jumpBtn.addEventListener('click', () => {
+          const p = parseInt(pageInput.value || '1', 10);
+          if (p) scrollToPage(p);
+        });
+
+        // 渲染全部页面（图片懒加载，首屏秒出图）
+        // 以 manifest 所在目录为基准构造图片路径；并准备一个备用根路径
+        const assetBase = new URL('.', location.origin + usedUrl).pathname;
+        const fallbackBase = assetBase.replace('/caixinweekly/', '/');
+        manifest.images.forEach((name, i) => {
+          const idx = i + 1;
+          const src = assetBase + name;
+          const alt = fallbackBase + name;
+          // 依据 pageHeights 计算占位比例（height/width * 100%）
+          const h = (manifest.pageHeights && manifest.pageHeights[i]) ? manifest.pageHeights[i] : 0;
+          const w = manifest.width || 0;
+          const ratioPct = (h > 0 && w > 0) ? (h / w * 100) : 140; // 兜底 140%
+          container.appendChild(createPage(idx, src, alt, ratioPct));
+        });
+      }).catch(err => {
+        container.innerHTML = '<p style="color:#ef4444">加载 manifest 失败：' + String(err) + '</p>';
+      });
+    </script>
+  </body>
+</html>
+
+
