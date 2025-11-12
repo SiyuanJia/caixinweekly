@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 try:
-    import fitz  # PyMuPDF
+    import fitz  # PyMuPDF  # pyright: ignore[reportMissingImports]
 except Exception as exc:
     raise SystemExit(
         "未安装 PyMuPDF。请先执行：python3 -m pip install pymupdf\n"
