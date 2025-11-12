@@ -10,13 +10,13 @@
 
 ## ✨ 核心特性
 
-- 📚 **PDF智能解析** - 自动提取周刊目录书签结构
+- 📚 **PDF智能解析** - 自动提取周刊目录书签结构（用于生成 outline）
 - 🎨 **精美响应式设计** - 财新品牌配色、PC/移动端适配
 - 🤖 **AI智能分析** - 集成 Gemini API，为每篇文章生成摘要和核心洞察
-- 📖 **高保真PDF阅读** - PDF.js 渲染，保留原始排版、支持缩放和导航
+- 🖼️ **高保真图片阅读** - 预渲染分页静态图片 + manifest，加载更稳更快
 - 💾 **本地数据存储** - IndexedDB，数据安全私密，离线可用
 - 🎯 **精准文章定位** - 快速跳转到任意文章位置
-- ⚡ **高性能加载** - 懒加载PDF页面，首屏响应快
+- ⚡ **高性能加载** - 图片懒加载 + 首屏直达目标页
 - 📤 **导出功能** - 支持导出 Outline 结构文件
 
 ---
@@ -61,7 +61,7 @@ input/
 ├── 2025-41-part2.md
 ├── 2025-41-part3.md
 ├── 2025-41-outline.json
-└── 财新周刊2025第41期.pdf（可选，用于云函数调用）
+└── 2025-41.pdf（仅用于离线生成分页图片与 manifest，不再直接对外发布）
 ```
 
 **文件格式说明：**
@@ -78,7 +78,7 @@ input/
 }
 ```
 
-#### 第2步：运行构建脚本
+#### 第2步：运行构建脚本（从 Markdown 生成期刊 JSON/Markdown）
 
 **输出文件：**
 ```
@@ -87,15 +87,21 @@ public/data/
 │   └── 2025-41.json          # 期刊完整数据（含AI摘要和洞察）
 ├── markdown/
 │   └── 2025-41.md            # 完整正文 Markdown
-└── pdfs/
-    └── 2025-41.pdf           # PDF 文件（需手动复制）
+└── pages/
+    └── 2025-41/              # 分页图片与 manifest（见下一步）
 ```
 
-#### 第3步：手动复制 PDF
+#### 第3步：生成分页图片与 manifest
 
 ```bash
-# 将 PDF 复制到相应位置
-cp input/财新周刊.pdf public/data/pdfs/2025-41.pdf
+ISSUE=2025-41
+python3 tools/render_pdf_pages.py \
+  --pdf "input/${ISSUE}.pdf" \
+  --outline "input/${ISSUE}-outline.json" \
+  --out "public/data/pages/${ISSUE}" \
+  --width 1024 \
+  --format webp \
+  --quality 75
 ```
 
 #### 第4步：本地测试
@@ -107,8 +113,8 @@ npm run dev
 #### 第5步：提交版本
 
 ```bash
-git add public/data/
-git commit -m "feat: 添加财新周刊2025第41期"
+git add -A
+git commit -m "feat: 添加财新周刊2025第41期（图片模式：分页图片+manifest）"
 git push
 ```
 
@@ -126,12 +132,11 @@ git push
 
 ### 文章详情页
 
-- 点击任意文章卡片，跳转到该文章的 PDF 阅读页
+- 点击任意文章卡片，跳转到该文章的图片阅读页（基于预渲染分页图片）
 - **工具栏**：左上角"返回目录"按钮
 - **交互**：
   - 滚动查看文章内容
-  - 支持 PDF 缩放（浏览器级别）
-  - 首屏快速加载，其他页面后台懒加载
+  - 首屏直达目标页，其余页面滚动到视口时懒加载
 
 ### 配置面板
 
@@ -152,7 +157,7 @@ git push
 | **构建工具** | Vite | 高速开发构建 |
 | **样式** | TailwindCSS | 原子化 CSS 框架 |
 | **动画** | Framer Motion | 流畅动画效果 |
-| **PDF处理** | PDF.js | 高保真 PDF 渲染 |
+| **图片渲染** | 预渲染静态图片 + manifest | 高保真与高性能并存 |
 | **数据存储** | Dexie.js (IndexedDB) | 本地离线数据库 |
 | **状态管理** | Zustand | 轻量级全局状态 |
 | **图标库** | Lucide React | 现代 SVG 图标 |
@@ -165,15 +170,15 @@ caixin-weekly-reader/
 │   ├── components/              # React 组件
 │   │   ├── Layout.tsx           # 整体布局（头部+内容）
 │   │   ├── ArticleCard.tsx      # 文章卡片（支持 PC/移动端弹窗）
-│   │   ├── ConfigModal.tsx      # 配置弹窗（PDF 上传、导出）
-│   │   ├── ReaderPage.tsx       # PDF 阅读页面（懒加载）
+│   │   ├── ConfigModal.tsx      # 配置弹窗（PDF 上传、导出 outline）
+│   │   ├── ReaderPage.tsx       # 图片阅读页面（分页图片懒加载）
 │   │   ├── LoadingSpinner.tsx   # 加载指示器
 │   │   ├── ErrorBoundary.tsx    # 错误边界
 │   │   └── ShareButton.tsx      # 分享按钮
 │   │
 │   ├── pages/
 │   │   ├── HomePage.tsx         # 首页（文章列表）
-│   │   └── ReaderPage.tsx       # 阅读页（PDF 查看）
+│   │   └── ReaderPage.tsx       # 阅读页（图片模式）
 │   │
 │   ├── lib/
 │   │   ├── db.ts                # Dexie 数据库定义和操作
@@ -190,21 +195,21 @@ caixin-weekly-reader/
 │
 ├── tools/
 │   ├── build_issue_from_md.py   # 🔑 核心构建脚本（从 MD 文件生成 JSON）
-│   └── （其他过期脚本已删除）
+│   └── render_pdf_pages.py      # 预渲染 PDF 为分页图片与 manifest
 │
 ├── public/
 │   ├── data/
 │   │   ├── issues/              # 期刊数据 JSON 文件
 │   │   ├── markdown/            # 完整 Markdown 文件
-│   │   ├── pdfs/                # PDF 文件
+│   │   └── pages/               # 分页图片与 manifest（每期一个目录）
 │   │   └── README.md            # 数据文件结构说明
-│   ├── pdf.worker.min.mjs       # PDF.js Worker 文件
 │   └── vite.svg
 │
 ├── input/                       # 输入文件目录
 │   ├── 2025-41-part1.md
 │   ├── 2025-41-part2.md
-│   └── 2025-41-outline.json
+│   ├── 2025-41-outline.json
+│   └── 2025-41.pdf              # 仅用于离线生成图片与 manifest（不发布）
 │
 ├── package.json
 ├── tsconfig.json
@@ -290,13 +295,13 @@ caixin-weekly-reader/
 - 右上角关闭按钮
 
 ### 3. PDF 页面懒加载
+（已替换为分页图片懒加载）
 
-```typescript
-// 初始加载：目标页面 ± 10 页
-// 后续：异步加载剩余页面（后台运行）
-renderRange(page - 10, page + 10)  // 同步渲染
-loadRest()                          // 异步加载其他页
-```
+### 3. 图片页面懒加载与即时定位
+
+- 预渲染为分页静态图片（WebP/JPEG/PNG），前端根据 `manifest.json` 构建 DOM。
+- 首屏直接滚动到目标页（考虑固定头部偏移），其余页面在进入视口时加载。
+- 使用占位骨架（根据真实宽高比），避免滚动过程中跳动。
 
 ### 4. 文本处理和 Markdown 支持
 
@@ -323,16 +328,17 @@ AI 返回的摘要和洞察可能包含：
 ```
 input/
 ├── *.md (分片 Markdown 文件)
-└── *-outline.json
+├── *-outline.json
+└── *.pdf（用于离线渲染分页图片）
 
          ↓ build_issue_from_md.py
 
 public/data/
 ├── issues/*.json (完整期刊数据)
 ├── markdown/*.md
-└── pdfs/*.pdf
+└── pages/{ISSUE}/(manifest.json + *.webp)
 
-         ↓ 前端加载
+         ↓ 前端加载（ReaderPage）
 
 HomePage
 ├── 加载 public/data/issues/2025-41.json
@@ -340,10 +346,10 @@ HomePage
 └── 支持点击打开 ReaderPage
 
 ReaderPage
-├── 根据 issue & page 参数加载 PDF
-├── 目标页面快速加载
-├── 其他页面后台懒加载
-└── 支持缩放和导航
+├── 根据 issue & page 加载 /data/pages/{ISSUE}/manifest.json
+├── 构建分页图片节点并插入（含骨架）
+├── 首屏直达目标页
+└── 进入视口时懒加载其余图片
 ```
 
 ---
@@ -452,8 +458,8 @@ npm run preview
 
 ### 常见问题
 
-**Q: PDF 无法显示？**  
-A: 确保 `public/data/pdfs/` 目录下存在对应的 PDF 文件，且文件名与 JSON 中的 `pdfUrl` 匹配。
+**Q: 图片未显示或定位不准？**  
+A: 确认对应期次目录 `public/data/pages/{ISSUE}/` 存在 `manifest.json` 与图片文件，且 `manifest.pageHeights` 与 `width` 对应；同时确认部署时 Vite `base` 与 Router `basename` 配置一致。
 
 **Q: AI 摘要为空？**  
 A: 如果未配置云函数或调用失败，摘要将为空。此时文章仍可阅读，但无 AI 分析。
@@ -465,6 +471,20 @@ A: 编辑 `tailwind.config.js` 中的 `caixin-*` 色彩定义。
 
 **最后更新：** 2025年11月  
 **版本：** 2.0  
+
+---
+
+## 🔄 近期重要变更
+
+- 切换为“仅图片模式”阅读：弃用在线 PDF 渲染，采用离线预渲染分页图片 + `manifest.json`，首屏直达目标页、滚动懒加载，显著提升加载稳定性和兼容性（含微信浏览器）。
+- 新增 `tools/render_pdf_pages.py`：基于 PyMuPDF 将 PDF 渲染为 WebP/JPEG/PNG，并生成 `manifest.json`（含每页高度，避免滚动跳动）。
+- `ReaderPage.tsx`：重写为图片渲染逻辑，移除模式切换与 PDF 代码；修复容器未挂载导致的“未找到页面元素”问题。
+- 静态资源路径：统一通过 `getOssUrl` 适配本地与 GitHub Pages 子路径（`import.meta.env.BASE_URL`）。
+- 路由：`BrowserRouter` 使用 `basename={import.meta.env.BASE_URL}`，配合 Vite `base: '/caixinweekly/'`。
+- CI/CD：使用 `.github/workflows/pages.yml` 自动构建并发布到 GitHub Pages。
+- AI 弹窗：PC 悬停 / 移动点击，位置跟随、可滚动、带关闭按钮；视觉与交互统一。
+- 配置弹窗：上传 PDF 后可直接“导出 outline.json”（导出刚上传的 PDF 目录），不自动关闭。
+- 目录与忽略规则：移除 `public/data/pdfs/`，将 PDF 存放于 `input/` 并在 `.gitignore` 忽略 `input/*.pdf`。
 
 ---
 

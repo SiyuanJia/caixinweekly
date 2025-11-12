@@ -79,3 +79,6 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+
+# Project inputs
+input/*.pdf
