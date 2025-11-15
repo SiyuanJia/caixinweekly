@@ -39,13 +39,7 @@ export default function ReaderPage() {
     }
   }
 
-  const createImagePage = (
-    idx: number,
-    src: string,
-    altSrc: string | null,
-    ratioPct: number,
-    isPriority: boolean
-  ) => {
+  const createImagePage = (idx: number, src: string, altSrc: string | null, ratioPct: number) => {
     const wrap = document.createElement('div')
     wrap.className = 'page-container mb-4 md:mb-6'
     wrap.setAttribute('data-page', String(idx))
@@ -59,10 +53,8 @@ export default function ReaderPage() {
     sk.style.width = '100%'
     sk.style.paddingTop = `${ratioPct}%`
     const img = document.createElement('img')
-    // 对首屏与目标附近页面提优先级
-    const eager = isPriority || idx <= 3
-    img.loading = eager ? ('eager' as any) : ('lazy' as any)
-    img.setAttribute('fetchpriority', eager ? 'high' : 'auto')
+    img.loading = idx <= 3 ? ('eager' as any) : ('lazy' as any)
+    img.setAttribute('fetchpriority', idx <= 2 ? 'high' : 'auto')
     img.decoding = 'async'
     img.alt = `Page ${idx}`
     img.style.opacity = '0.001'
@@ -113,8 +105,7 @@ export default function ReaderPage() {
         const alt = fallbackBase ? fallbackBase + name : null
         const h = (manifest.pageHeights && manifest.pageHeights[i]) ? manifest.pageHeights[i] : 0
         const ratioPct = (h > 0 && w > 0) ? (h / w * 100) : 140
-        const isPriority = Math.abs(idx - targetPage) <= 2
-        const node = createImagePage(idx, src, alt, ratioPct, isPriority)
+        const node = createImagePage(idx, src, alt, ratioPct)
         canvasContainerRef.current?.appendChild(node)
       }
       // 立即跳到目标页，并在目标图像加载或布局稳定后再次校准，避免移动端偏移
