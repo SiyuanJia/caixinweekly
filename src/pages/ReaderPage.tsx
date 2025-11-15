@@ -39,7 +39,13 @@ export default function ReaderPage() {
     }
   }
 
-  const createImagePage = (idx: number, src: string, altSrc: string | null, ratioPct: number) => {
+  const createImagePage = (
+    idx: number,
+    src: string,
+    altSrc: string | null,
+    ratioPct: number,
+    isPriority: boolean
+  ) => {
     const wrap = document.createElement('div')
     wrap.className = 'page-container mb-4 md:mb-6'
     wrap.setAttribute('data-page', String(idx))
@@ -53,8 +59,10 @@ export default function ReaderPage() {
     sk.style.width = '100%'
     sk.style.paddingTop = `${ratioPct}%`
     const img = document.createElement('img')
-    img.loading = idx <= 3 ? ('eager' as any) : ('lazy' as any)
-    img.setAttribute('fetchpriority', idx <= 2 ? 'high' : 'auto')
+    // 对首屏与目标附近页面提优先级
+    const eager = isPriority || idx <= 3
+    img.loading = eager ? ('eager' as any) : ('lazy' as any)
+    img.setAttribute('fetchpriority', eager ? 'high' : 'auto')
     img.decoding = 'async'
     img.alt = `Page ${idx}`
     img.style.opacity = '0.001'
@@ -105,11 +113,33 @@ export default function ReaderPage() {
         const alt = fallbackBase ? fallbackBase + name : null
         const h = (manifest.pageHeights && manifest.pageHeights[i]) ? manifest.pageHeights[i] : 0
         const ratioPct = (h > 0 && w > 0) ? (h / w * 100) : 140
-        const node = createImagePage(idx, src, alt, ratioPct)
+        const isPriority = Math.abs(idx - targetPage) <= 2
+        const node = createImagePage(idx, src, alt, ratioPct, isPriority)
         canvasContainerRef.current?.appendChild(node)
       }
-      // 立即跳到目标页
+      // 立即跳到目标页，并在目标图像加载或布局稳定后再次校准，避免移动端偏移
       scrollToPage(targetPage, false)
+      // 若目标页图片尚未完成加载，加载完成后再校正一次
+      const targetWrap = canvasContainerRef.current?.querySelector(`[data-page="${targetPage}"]`)
+      const targetImg = targetWrap?.querySelector('img') as HTMLImageElement | null
+      if (targetImg) {
+        if (!targetImg.complete) {
+          targetImg.addEventListener(
+            'load',
+            () => {
+              // 等一帧让回流完成
+              requestAnimationFrame(() => scrollToPage(targetPage, false))
+            },
+            { once: true }
+          )
+        } else {
+          // 已经加载，轻微延迟再对齐一次（处理地址栏收起/展开造成的视口变化）
+          setTimeout(() => scrollToPage(targetPage, false), 150)
+        }
+      } else {
+        // 退路：在短延迟后再对齐一次
+        setTimeout(() => scrollToPage(targetPage, false), 200)
+      }
     } catch (e) {
       console.error('图片模式加载失败：', e)
       setIsLoading(false)
@@ -132,7 +162,11 @@ export default function ReaderPage() {
     if (pageElement) {
       console.log('✅ 找到页面元素，开始滚动')
       const elementTop = pageElement.getBoundingClientRect().top + window.pageYOffset
-      const offsetPosition = elementTop - 80
+      // 计算实际头部高度（含粘性导航），移动端自适应，避免硬编码
+      const headerEl = document.querySelector('header')
+      const headerH = headerEl ? (headerEl as HTMLElement).getBoundingClientRect().height : 0
+      // 额外留出 8px 的呼吸间距
+      const offsetPosition = elementTop - Math.max(headerH + 8, 0)
       
       window.scrollTo({
         top: offsetPosition,
